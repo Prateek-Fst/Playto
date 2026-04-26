@@ -23,6 +23,20 @@ app = Celery("playto_payouts")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 
+# Namespace every key Celery writes to Redis with `playto:` so this project
+# can safely share a Redis Cloud / Upstash database with other apps without
+# their task queues / result keys colliding.
+#
+# `visibility_timeout` is shorter than the default 1h to play nicely with
+# managed Redis providers (Upstash/Redis Cloud) that drop idle connections
+# aggressively. Our individual payout tasks finish in <2s, so 5min is plenty.
+app.conf.broker_transport_options = {
+    "global_keyprefix": "playto:",
+    "visibility_timeout": 300,
+}
+app.conf.result_backend_transport_options = {"global_keyprefix": "playto:"}
+app.conf.broker_connection_retry_on_startup = True
+
 app.conf.beat_schedule = {
     "sweep-stuck-payouts": {
         "task": "payouts.tasks.sweep_stuck_payouts",
