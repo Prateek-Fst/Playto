@@ -23,6 +23,29 @@ app = Celery("playto_payouts")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 app.autodiscover_tasks()
 
+
+# When the worker runs with --pool=threads (which we use on the bundled
+# Render free-tier deployment), each task may run on a different thread
+# than the previous one. Django keeps a *per-thread* DB connection, and
+# without explicit cleanup those connections accumulate behind the
+# Supabase pooler until we hit "too many connections".
+#
+# The `task_postrun` signal fires after every task; we close any stale
+# connections that thread might be holding so the next task starts fresh.
+from celery.signals import task_postrun  # noqa: E402
+
+
+@task_postrun.connect
+def close_db_connections_after_task(**_kwargs):
+    from django.db import connections
+
+    for conn in connections.all():
+        try:
+            conn.close_if_unusable_or_obsolete()
+        except Exception:
+            # Connection may already be torn down; safe to ignore.
+            pass
+
 # Namespace every key Celery writes to Redis with `playto:` so this project
 # can safely share a Redis Cloud / Upstash database with other apps without
 # their task queues / result keys colliding.
