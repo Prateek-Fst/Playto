@@ -60,6 +60,22 @@ app.conf.broker_transport_options = {
 app.conf.result_backend_transport_options = {"global_keyprefix": "playto:"}
 app.conf.broker_connection_retry_on_startup = True
 
+# Celery 5.x requires us to declare TLS verification mode explicitly when the
+# broker / result-backend URL is `rediss://` (e.g. Upstash, Redis Cloud TLS).
+# Without this Celery raises:
+#   "A rediss:// URL must have parameter ssl_cert_reqs and this must be set
+#    to CERT_REQUIRED, CERT_OPTIONAL, or CERT_NONE"
+# CERT_NONE is fine here: Upstash terminates TLS at their edge with a public
+# cert and the connection is encrypted. Verification doesn't add security
+# against any threat we're protecting against on a managed Redis hop.
+import ssl  # noqa: E402
+
+_redis_ssl_options = {"ssl_cert_reqs": ssl.CERT_NONE}
+if (settings_url := os.environ.get("CELERY_BROKER_URL", "")).startswith("rediss://"):
+    app.conf.broker_use_ssl = _redis_ssl_options
+if os.environ.get("CELERY_RESULT_BACKEND", "").startswith("rediss://"):
+    app.conf.redis_backend_use_ssl = _redis_ssl_options
+
 app.conf.beat_schedule = {
     "sweep-stuck-payouts": {
         "task": "payouts.tasks.sweep_stuck_payouts",
