@@ -1,0 +1,35 @@
+"""Celery app and beat schedule.
+
+Beat is responsible for two periodic jobs:
+
+1. ``payouts.tasks.sweep_stuck_payouts`` — every 10s, pick up payouts that
+   have been in the ``processing`` state for longer than
+   ``PAYOUT_STUCK_TIMEOUT_SECONDS`` and either retry them with exponential
+   backoff or give up and refund the held funds.
+2. ``payouts.tasks.cleanup_idempotency_keys`` — every hour, delete keys
+   older than ``IDEMPOTENCY_TTL_HOURS``. The TTL is also enforced on read,
+   so this is just hygiene.
+"""
+from __future__ import annotations
+
+import os
+
+from celery import Celery
+from celery.schedules import crontab
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+
+app = Celery("playto_payouts")
+app.config_from_object("django.conf:settings", namespace="CELERY")
+app.autodiscover_tasks()
+
+app.conf.beat_schedule = {
+    "sweep-stuck-payouts": {
+        "task": "payouts.tasks.sweep_stuck_payouts",
+        "schedule": 10.0,
+    },
+    "cleanup-idempotency-keys": {
+        "task": "payouts.tasks.cleanup_idempotency_keys",
+        "schedule": crontab(minute=0),
+    },
+}
